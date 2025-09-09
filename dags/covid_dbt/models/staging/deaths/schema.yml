@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: stg__covid_historical_deaths
+    columns:
+      - name: date
+      - name: deaths

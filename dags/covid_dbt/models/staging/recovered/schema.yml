@@ -1,0 +1,7 @@
+version: 2
+
+models:
+  - name: stg__covid_historical_recovered
+    columns:
+      - name: date
+      - name: recovered

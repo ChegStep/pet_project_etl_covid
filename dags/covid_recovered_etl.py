@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 import json
 import pandas as pd
 from psycopg2.extras import execute_values
-import os
 
 default_args = {
     'owner': 'airflow',
@@ -22,10 +21,10 @@ default_args = {
 def _process_and_store_covid_data(ti, **kwargs):
     data_json  = ti.xcom_pull(task_ids='extract_covid_data')
 
-    if not data_json or 'cases' not in data_json:
+    if not data_json or 'recovered' not in data_json:
         raise ValueError("Invalid data structure received from API")
 
-    df = pd.DataFrame.from_dict(data_json['cases'], orient='index', columns=['cases'])
+    df = pd.DataFrame.from_dict(data_json['recovered'], orient='index', columns=['recovered'])
     df.index.name = 'date'
     df.reset_index(inplace=True)
     df['date'] = pd.to_datetime(df['date']).dt.date
@@ -37,23 +36,23 @@ def _process_and_store_covid_data(ti, **kwargs):
     conn = hook.get_conn()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT MAX(date) FROM raw.covid_historical;")
+    cursor.execute("SELECT MAX(date) FROM raw.covid_historical_recovered;")
     result = cursor.fetchone()
     latest_date_in_db = result[0] if result else None
-    print(f'AIRFLOW {os.environ['AIRFLOW_HOME']}')
+
     if latest_date_in_db is None:
         execute_values(cursor, """
-                INSERT INTO raw.covid_historical (date, cases)
+                INSERT INTO raw.covid_historical_recovered (date, recovered)
                 VALUES %s;
-            """, [tuple(x) for x in df[['date', 'cases']].to_numpy()])
+            """, [tuple(x) for x in df[['date', 'recovered']].to_numpy()])
         print("Loaded all historical data")
     else:
         new_data_df = df[df['date'] > latest_date_in_db]
         if not new_data_df.empty:
             execute_values(cursor, """
-                    INSERT INTO raw.covid_historical (date, cases)
+                    INSERT INTO raw.covid_historical_deaths (date, recovered)
                     VALUES %s;
-                """, [tuple(x) for x in new_data_df[['date', 'cases']].to_numpy()])
+                """, [tuple(x) for x in new_data_df[['date', 'recovered']].to_numpy()])
             print(f"Loaded {len(new_data_df)} new records")
         else:
             print("No new data to load.")
@@ -64,7 +63,7 @@ def _process_and_store_covid_data(ti, **kwargs):
 
     return f"Successfully processed {len(df)} records"
 
-with DAG('covid_etl_pipeline',
+with DAG('covid_etl_pipeline_recovered',
          default_args=default_args,
          schedule='@daily',
          catchup=False) as dag:
@@ -95,14 +94,13 @@ with DAG('covid_etl_pipeline',
         task_id='create_raw_table',
         conn_id='postgres_conn',
         sql="""
-            CREATE TABLE IF NOT EXISTS raw.covid_historical (
+            CREATE TABLE IF NOT EXISTS raw.covid_historical_recovered (
                 date DATE PRIMARY KEY,
-                cases INTEGER NOT NULL,
+                recovered INTEGER NOT NULL,
                 loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """
     )
-
     process_and_load_data = PythonOperator(
         task_id='process_and_load_data',
         python_callable=_process_and_store_covid_data

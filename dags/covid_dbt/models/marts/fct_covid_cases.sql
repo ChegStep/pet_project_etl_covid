@@ -12,7 +12,7 @@ WITH source AS (
         date,
         cases,
         cases != LAG(cases) OVER (ORDER BY date) AS did_change
-    FROM {{ ref('stg__covid_historical') }}
+    FROM {{ ref('stg__covid_historical_cases') }}
 ),
 
 records_with_validity AS (

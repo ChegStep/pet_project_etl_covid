@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: stg__covid_historical
+  - name: stg__covid_historical_cases
     columns:
       - name: date
       - name: cases

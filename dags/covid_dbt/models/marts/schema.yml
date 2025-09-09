@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: fct_covid_cases
+    columns:
+      - name: date,
+      - name: cases,
+      - name: valid_from,
+      - name: valid_to
