@@ -102,6 +102,16 @@ services:
       timeout: 5s
       retries: 5
 
+  metabase:
+    build:
+      context: .
+      dockerfile: ./metabase/Dockerfile
+    container_name: metabase
+    ports:
+      - "3000:3000"
+    volumes:
+      - metabase_data:/metabase-data
+
   postgres:
     image: postgres:13
     environment:
@@ -350,3 +360,4 @@ services:
 volumes:
   postgres-db-volume:
   postgres_data:
+  metabase_data:
