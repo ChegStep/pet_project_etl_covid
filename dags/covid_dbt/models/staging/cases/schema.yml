@@ -4,4 +4,19 @@ models:
   - name: stg__covid_historical_cases
     columns:
       - name: date
+        data_tests:
+          - not_null
+          - unique
+          - dbt_utils.expression_is_true:
+              expression: ">= '2020-01-01'"
+          - dbt_utils.accepted_range:
+              min_value: "'2020-01-01'"
+              max_value: 'current_date'
       - name: cases
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000000

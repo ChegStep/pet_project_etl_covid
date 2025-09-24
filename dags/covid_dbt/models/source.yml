@@ -5,5 +5,32 @@ sources:
     schema: raw
     tables:
       - name: covid_historical
+        loaded_at_field: loaded_at
+        columns:
+          - name: date
+            data_tests:
+              - not_null
+              - unique
+              - dbt_utils.expression_is_true:
+                  expression: ">= '2020-01-01'"
+                  severity: error
+              - dbt_utils.expression_is_true:
+                  expression: "<= current_date"
+                  severity: error
+          - name: cases
+            data_tests:
+              - not_null
+              - dbt_utils.expression_is_true:
+                  expression: ">= 0"
+                  severity: error
+              - dbt_utils.expression_is_true:
+                  expression: "<= 10000000"
+                  severity: warn
+          - name: loaded_at
+            data_tests:
+              - not_null
+              - dbt_utils.expression_is_true:
+                  expression: "<= current_timestamp"
+                  severity: warn
       - name: covid_historical_deaths
       - name: covid_historical_recovered
