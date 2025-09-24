@@ -10,6 +10,9 @@ import json
 import pandas as pd
 from psycopg2.extras import execute_values
 import os
+import logging
+
+logger = logging.getLogger('airflow.task')
 
 default_args = {
     'owner': 'airflow',
@@ -20,49 +23,92 @@ default_args = {
 }
 
 def _process_and_store_covid_data(ti, **kwargs):
-    data_json  = ti.xcom_pull(task_ids='extract_covid_data')
+    try:
+        logger.info("Начало обработки данных по COVID-19")
 
-    if not data_json or 'cases' not in data_json:
-        raise ValueError("Invalid data structure received from API")
+        data_json = ti.xcom_pull(task_ids='extract_covid_data')
+        logger.info(f"Получены данные из XCom. Ключи: {list(data_json.keys())}")
 
-    df = pd.DataFrame.from_dict(data_json['cases'], orient='index', columns=['cases'])
-    df.index.name = 'date'
-    df.reset_index(inplace=True)
-    df['date'] = pd.to_datetime(df['date']).dt.date
+        if not data_json or 'cases' not in data_json:
+            error_msg = f"Неверная структура данных. Ожидался ключ 'cases'. Получены ключи {list(data_json.keys())}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-    df = df.sort_values('date')
-    latest_date_in_pull = df['date'].max().isoformat()
+        # Логируем sample данных для отладки
+        cases_sample = dict(list(data_json['cases'].items())[:3])
+        logger.info(f"Sample данных cases: {cases_sample}")
 
-    hook = PostgresHook(postgres_conn_id='postgres_conn')
-    conn = hook.get_conn()
-    cursor = conn.cursor()
+        # Преобразование в DataFrame
+        df = pd.DataFrame.from_dict(data_json['cases'], orient='index', columns=['cases'])
+        df.index.name = 'date'
+        df.reset_index(inplace=True)
+        df['date'] = pd.to_datetime(df['date']).dt.date
 
-    cursor.execute("SELECT MAX(date) FROM raw.covid_historical;")
-    result = cursor.fetchone()
-    latest_date_in_db = result[0] if result else None
-    print(f'AIRFLOW {os.environ['AIRFLOW_HOME']}')
-    if latest_date_in_db is None:
-        execute_values(cursor, """
-                INSERT INTO raw.covid_historical (date, cases)
-                VALUES %s;
-            """, [tuple(x) for x in df[['date', 'cases']].to_numpy()])
-        print("Loaded all historical data")
-    else:
-        new_data_df = df[df['date'] > latest_date_in_db]
-        if not new_data_df.empty:
-            execute_values(cursor, """
-                    INSERT INTO raw.covid_historical (date, cases)
-                    VALUES %s;
-                """, [tuple(x) for x in new_data_df[['date', 'cases']].to_numpy()])
-            print(f"Loaded {len(new_data_df)} new records")
+        df = df.sort_values('date')
+        logger.info(f"Создан DataFrame с {len(df)} записями")
+
+        # Подключение к БД
+        hook = PostgresHook(postgres_conn_id='postgres_conn')
+        conn = hook.get_conn()
+        cursor = conn.cursor()
+        logger.info("Подключение к PostgreSQL установлено")
+
+        # Проверяем на существование таблицы в БД
+        cursor.execute("""
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables 
+                                WHERE table_schema = 'raw' 
+                                AND table_name = 'covid_historical'
+                            );
+                        """)
+        table_exists = cursor.fetchone()[0]
+
+        if table_exists:
+            cursor.execute("SELECT MAX(date) FROM raw.covid_historical;")
+            result = cursor.fetchone()
+            latest_date_in_db = result[0] if result else None
+            logger.info(f"Таблица существует в БД. Последняя дата: {latest_date_in_db}")
         else:
-            print("No new data to load.")
+            latest_date_in_db = None
+            logger.warning("Таблица не существует в БД")
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        # Логика инкрементальной загрузки
+        if latest_date_in_db is None:
+            # Полная загрузка
+            execute_values(cursor, """
+                        INSERT INTO raw.covid_historical (date, cases)
+                        VALUES %s;
+                    """, [tuple(x) for x in df[['date', 'cases']].to_numpy()])
+            print(f"Выполнена полная загрузка: {len(df)} записей")
+        else:
+            # Инкрементальная загрузка
+            new_data_df = df[df['date'] > latest_date_in_db]
+            if not new_data_df.empty:
+                execute_values(cursor, """
+                            INSERT INTO raw.covid_historical (date, cases)
+                            VALUES %s;
+                        """, [tuple(x) for x in new_data_df[['date', 'cases']].to_numpy()])
+                logger.info(f"Добавлено {len(df)} новых записей")
+            else:
+                logger.info("Новых записей не обнаружено")
 
-    return f"Successfully processed {len(df)} records"
+        # Фиксируем изменения
+        conn.commit()
+
+        # Проверка результата
+        cursor.execute("SELECT COUNT(*) FROM raw.covid_historical;")
+        final_count = cursor.fetchone()[0]
+        logger.info(f"Итоговое кол-во записей в таблице: {final_count}")
+
+        cursor.close()
+        conn.close()
+        logger.info("Обработка данных завершена")
+
+        return f"Успешно обработано {len(df)} записей"
+    except Exception as e:
+        logger.error(f"Ошибка при обработке данных: {e}", exc_info=True)
+        raise
+
 
 with DAG('covid_etl_pipeline',
          default_args=default_args,
